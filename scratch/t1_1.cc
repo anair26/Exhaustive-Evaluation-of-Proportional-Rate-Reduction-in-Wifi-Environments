@@ -43,25 +43,45 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("ThirdScriptExample");
 
-static void
+/*static void
 RxDrop (Ptr<const Packet> p)
 {
   NS_LOG_UNCOND ("RxDrop at " << Simulator::Now ().GetSeconds ());
+}*/
+
+Ptr<PacketSink> sink;                         /* Pointer to the packet sink application */
+uint64_t lastTotalRx = 0;                     /* The value of the last total received bytes */
+
+void
+CalculateThroughput ()
+{
+  Time now = Simulator::Now ();                                         /* Return the simulator's virtual time. */
+  double cur = (sink->GetTotalRx () - lastTotalRx) * (double) 8 / 1e5;     /* Convert Application RX Packets to MBits. */
+  std::cout << now.GetSeconds () << "s: \t" << cur << " Mbit/s" << std::endl;
+  lastTotalRx = sink->GetTotalRx ();
+  Simulator::Schedule (MilliSeconds (100), &CalculateThroughput);
 }
+
+
 
 int 
 main (int argc, char *argv[])
 {
-  bool verbose = true;
+bool verbose = true;
   //uint32_t nCsma = 3;
   uint32_t nWifi = 1;
   bool tracing = true;
-
+ std::string phyRate = "HtMcs7";
+uint32_t payloadSize = 1472; 
+double simulationTime = 10;  
   CommandLine cmd;
+  cmd.AddValue ("payloadSize", "Payload size in bytes", payloadSize);
   //cmd.AddValue ("nCsma", "Number of \"extra\" CSMA nodes/devices", nCsma);
   cmd.AddValue ("nWifi", "Number of wifi STA devices", nWifi);
   cmd.AddValue ("verbose", "Tell echo applications to log if true", verbose);
   cmd.AddValue ("tracing", "Enable pcap tracing", tracing);
+  cmd.AddValue ("simulationTime", "Simulation time in seconds", simulationTime);
+cmd.AddValue ("phyRate", "Physical layer bitrate", phyRate);
 
   cmd.Parse (argc,argv);
 
@@ -85,29 +105,44 @@ main (int argc, char *argv[])
 
   PointToPointHelper pointToPoint;
   pointToPoint.SetDeviceAttribute ("DataRate", StringValue ("10Mbps"));
-  pointToPoint.SetChannelAttribute ("Delay", StringValue ("2ms"));
+  pointToPoint.SetChannelAttribute ("Delay", StringValue ("1ms"));
 
   NetDeviceContainer p2pDevices;
   p2pDevices = pointToPoint.Install (p2pNodes);
 
-  //NodeContainer csmaNodes;
-  //csmaNodes.Add (p2pNodes.Get (1));
-  //csmaNodes.Create (nCsma);
 
-  //CsmaHelper csma;
-  //csma.SetChannelAttribute ("DataRate", StringValue ("100Mbps"));
-  //csma.SetChannelAttribute ("Delay", TimeValue (NanoSeconds (6560)));
+/* Configure TCP Options */
+  Config::SetDefault ("ns3::TcpSocket::SegmentSize", UintegerValue (payloadSize));
 
-  //NetDeviceContainer csmaDevices;
-  //csmaDevices = csma.Install (csmaNodes);
+  WifiMacHelper wifiMac;
+  WifiHelper wifiHelper;
+  wifiHelper.SetStandard (WIFI_PHY_STANDARD_80211n_5GHZ);
 
+  
   NodeContainer wifiStaNodes;
   wifiStaNodes.Create (nWifi);
   NodeContainer wifiApNode = p2pNodes.Get (0);
 
-  YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
-  YansWifiPhyHelper phy = YansWifiPhyHelper::Default ();
-  phy.SetChannel (channel.Create ());
+
+/* Set up Legacy Channel */
+  YansWifiChannelHelper wifiChannel;
+  wifiChannel.SetPropagationDelay ("ns3::ConstantSpeedPropagationDelayModel");
+  wifiChannel.AddPropagationLoss ("ns3::FriisPropagationLossModel", "Frequency", DoubleValue (5e9));
+
+ YansWifiPhyHelper wifiPhy = YansWifiPhyHelper::Default ();
+  wifiPhy.SetChannel (wifiChannel.Create ());
+  wifiPhy.Set ("TxPowerStart", DoubleValue (1.0));
+  wifiPhy.Set ("TxPowerEnd", DoubleValue (1.0));
+  wifiPhy.Set ("TxPowerLevels", UintegerValue (1));
+  wifiPhy.Set ("TxGain", DoubleValue (0));
+  wifiPhy.Set ("RxGain", DoubleValue (0));
+  wifiPhy.Set ("RxNoiseFigure", DoubleValue (20));
+  wifiPhy.Set ("CcaMode1Threshold", DoubleValue (-79));
+  wifiPhy.Set ("EnergyDetectionThreshold", DoubleValue (-79 + 3));
+  wifiPhy.SetErrorRateModel ("ns3::YansErrorRateModel");
+  wifiHelper.SetRemoteStationManager ("ns3::ConstantRateWifiManager",
+                                      "DataMode", StringValue (phyRate),
+                                      "ControlMode", StringValue ("HtMcs0"));
 
   WifiHelper wifi;
   wifi.SetRemoteStationManager ("ns3::AarfWifiManager");
@@ -119,43 +154,20 @@ main (int argc, char *argv[])
                "ActiveProbing", BooleanValue (false));
 
   NetDeviceContainer staDevices;
-  staDevices = wifi.Install (phy, mac, wifiStaNodes);
+  staDevices = wifi.Install ( wifiPhy, mac, wifiStaNodes);
+  
+  //staDevices.Get (0)->SetAttribute ("Phy", PointerValue(myWifiPhy));
+
 
   mac.SetType ("ns3::ApWifiMac",
                "Ssid", SsidValue (ssid));
 
-  NetDeviceContainer apDevices;
-  apDevices = wifi.Install (phy, mac, wifiApNode);
+  NetDeviceContainer apDevice;
   
-//Ptr<RateErrorModel> em = CreateObject<RateErrorModel> ();
-  //em->SetAttribute ("ErrorRate", DoubleValue (0.00001));
- // devices.Get (1)->SetAttribute ("ReceiveErrorModel", PointerValue (em));
- //#include "ns3/yans-wifi-phy.h"
-
-
   
- /* Ptr<WifiPhy> myWifiPhy = CreateObject<WifiPhy> ();
-  Ptr<WifiNetDevice> myWifiNetDevice = DynamicCast<WifiNetDevice> (staDevices.Get (0));
-  myWifiPhy = myWifiNetDevice->GetPhy();
-  //Ptr<YansWifiPhy> yp = DynamicCast<YansWifiPhy> (phy)
-  myWifiPhy->SetAttribute ("RxNoiseFigure", DoubleValue(0.00001));
-  staDevices.Get (0)->SetAttribute ("Phy", PointerValue(myWifiPhy)); */
-
-
-//Suppose you have a Ptr<NetDevice> dev given by Node::GetDevice
-//(uint32_t) or NetDeviceContainer::Get. You know that dev is actually a
-//WifiNetDevice.
-
-//chan
-//cha
- Ptr<WifiNetDevice> myWifiNetDevice = DynamicCast<WifiNetDevice> (staDevices.Get (0)); //
-//Converts a Ptr<NetDevice> to a Ptr<WifiNetDevice>
- Ptr<WifiPhy> myWifiPhy1 = myWifiNetDevice->GetPhy (); //works. dev->GetPhy () doesn't
-
- Ptr<YansWifiPhy> myWifiPhy = DynamicCast<YansWifiPhy> (myWifiPhy1); // phy
- myWifiPhy->SetAttribute ("RxNoiseFigure", DoubleValue(2.00));
-  staDevices.Get (0)->SetAttribute ("Phy", PointerValue(myWifiPhy));
-MobilityHelper mobility;
+  apDevice = wifi.Install ( wifiPhy, mac, wifiApNode);
+  
+ MobilityHelper mobility;
 
   mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
                                  "MinX", DoubleValue (0.0),
@@ -192,59 +204,60 @@ MobilityHelper mobility;
 
   address.SetBase ("10.1.3.0", "255.255.255.0");
   stInterface = address.Assign (staDevices);
-  address.Assign (apDevices);
+  address.Assign (apDevice);
 
-  //UdpEchoServerHelper echoServer (9);
+
+//UdpEchoServerHelper echoServer (9);
   uint16_t sinkPort = 8080;
   Address sinkAddress (InetSocketAddress (stInterface.GetAddress (0),sinkPort));
-  PacketSinkHelper sink ("ns3::TcpSocketFactory",
-                    InetSocketAddress (Ipv4Address::GetAny (), sinkPort));
-  ApplicationContainer sinkApps = sink.Install (wifiStaNodes);
-  sinkApps.Start (Seconds (0.0));
-  sinkApps.Stop (Seconds (10.0));
+  PacketSinkHelper sinkHelper ("ns3::TcpSocketFactory",InetSocketAddress (Ipv4Address::GetAny (), sinkPort));
+  ApplicationContainer sinkApp = sinkHelper.Install (wifiStaNodes);
+  sink = StaticCast<PacketSink> (sinkApp.Get (0));
+//  sinkApp.Start (Seconds (0.0));
+//  sinkApp.Stop (Seconds (10.0));
+    
+  OnOffHelper server ("ns3::TcpSocketFactory", sinkAddress);
+  server.SetAttribute ("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1]"));
+  server.SetAttribute ("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+  server.SetAttribute ("DataRate",StringValue ("10Mbps"));
+  server.SetAttribute ("PacketSize", UintegerValue (1024));
+  ApplicationContainer serverApp = server.Install (wifiStaNodes);
 
 
-  /*ApplicationContainer serverApps = echoServer.Install (csmaNodes.Get (nCsma));
-  serverApps.Start (Seconds (1.0));
-  serverApps.Stop (Seconds (10.0));*/
+   sinkApp.Start (Seconds (0.0));
+  serverApp.Start (Seconds (1.0));
+   sinkApp.Stop (Seconds (10.0));
 
-  //UdpEchoClientHelper echoClient (csmaInterfaces.GetAddress (nCsma), 9);
-  OnOffHelper onOffHelper ("ns3::TcpSocketFactory", sinkAddress);
-  onOffHelper.SetAttribute ("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1]"));
-  onOffHelper.SetAttribute ("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
-  onOffHelper.SetAttribute ("DataRate",StringValue ("10Mbps"));
-  onOffHelper.SetAttribute ("PacketSize", UintegerValue (1024));
+ ApplicationContainer source;
 
-  ApplicationContainer source;
+  source.Add (server.Install (p2pNodes.Get (1)));
+  source.Start (Seconds (0.0));
+ 
+ Simulator::Schedule (Seconds (1.1), &CalculateThroughput);
+ source.Stop (Seconds (10.0));
 
-  source.Add (onOffHelper.Install (p2pNodes.Get (1)));
-  source.Start (Seconds (1.0));
-  source.Stop (Seconds (10.0));
-  /*echoClient.SetAttribute ("MaxPackets", UintegerValue (1));
-  echoClient.SetAttribute ("Interval", TimeValue (Seconds (1.0)));
-  echoClient.SetAttribute ("PacketSize", UintegerValue (1024));
-
-  ApplicationContainer clientApps = 
-    echoClient.Install (wifiStaNodes.Get (nWifi - 1));
-  clientApps.Start (Seconds (2.0));
-  clientApps.Stop (Seconds (10.0));*/
-
-  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
+Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
   
-  //change
-  myWifiNetDevice->TraceConnectWithoutContext ("PhyRxDrop", MakeCallback (&RxDrop));
- // Config::ConnectWithoutContext("/NodeList/*/DeviceList/*/$ns3::WifiNetDevice/Phy/PhyRxDrop", MakeCallback(&RxDrop));
-
-  Simulator::Stop (Seconds (11.0));
+Simulator::Stop (Seconds (11.0));
 
   if (tracing == true)
     {
-      pointToPoint.EnablePcapAll ("third");
-      phy.EnablePcap ("third", apDevices.Get (0));
-      //csma.EnablePcap ("third", csmaDevices.Get (0), true);
+      wifiPhy.SetPcapDataLinkType (YansWifiPhyHelper::DLT_IEEE802_11_RADIO);
+      wifiPhy.EnablePcap ("t1_ap", apDevice);
+      wifiPhy.EnablePcap ("t1_Sta", staDevices);
     }
-
+   Simulator::Stop (Seconds (simulationTime + 1));
   Simulator::Run ();
   Simulator::Destroy ();
+
+  double averageThroughput = ((sink->GetTotalRx () * 8) / (1e6  * simulationTime));
+  if (averageThroughput < 5)
+    {
+      NS_LOG_ERROR ("Obtained throughput is not in the expected boundaries!");
+      exit (1);
+    }
+  std::cout << "\nAverage throughput: " << averageThroughput << " Mbit/s" << std::endl;
+
+
   return 0;
 }
